@@ -44,6 +44,11 @@ var (
 	// ignored if the target cluster is a shoot of the control cluster
 	controlClusterNamespace = os.Getenv("CONTROL_CLUSTER_NAMESPACE")
 
+	// mcContainerPrefix is the prefix used for the container name of
+	// machine controller in the MCM deployment
+	// eg: machine-controller-manager-provider-<provider-name>
+	mcContainerPrefix = "machine-controller-manager-provider-"
+
 	// make processes/sessions started by gexec. available only if the controllers are running in local setup. updated during runtime
 	mcmsession, mcsession *gexec.Session
 
@@ -284,31 +289,28 @@ func (c *IntegrationTestFramework) prepareMcmDeployment(
 	mcmDeploymentOrigObj = result
 
 	// update containers spec
-	providerSpecificRegexp, _ := regexp.Compile("machine-controller-manager-provider-")
+	providerSpecificRegexp, _ := regexp.Compile(mcContainerPrefix)
 
 	containers := mcmDeploymentOrigObj.Spec.Template.Spec.Containers
 
 	for i := range containers {
 		if providerSpecificRegexp.MatchString(containers[i].Image) {
 			// set container image to mcContainerImageTag as the name of the container contains provider
-			if len(mcContainerImage) != 0 {
-				containers[i].Image = mcContainerImage
-				var isOptionAvailable bool
-				for option := range containers[i].Command {
-					if strings.Contains(containers[i].Command[option], "machine-drain-timeout=") {
-						isOptionAvailable = true
-						containers[i].Command[option] = "--machine-drain-timeout=5m"
-					}
-				}
-				if !isOptionAvailable {
-					containers[i].Command = append(containers[i].Command, "--machine-drain-timeout=5m")
+			containers[i].Image = mcContainerImage
+			var isOptionAvailable bool
+			for option := range containers[i].Command {
+				if strings.Contains(containers[i].Command[option], "machine-drain-timeout=") {
+					isOptionAvailable = true
+					containers[i].Command[option] = "--machine-drain-timeout=5m"
 				}
 			}
+			if !isOptionAvailable {
+				containers[i].Command = append(containers[i].Command, "--machine-drain-timeout=5m")
+			}
+
 		} else {
 			// set container image to mcmContainerImageTag as the name of container contains provider
-			if len(mcmContainerImage) != 0 {
-				containers[i].Image = mcmContainerImage
-			}
+			containers[i].Image = mcmContainerImage
 
 			// set machine-safety-overshooting-period to 300ms for freeze check to succeed
 			var isOptionAvailable bool
@@ -619,7 +621,7 @@ func (c *IntegrationTestFramework) SetupBeforeSuite() {
 	// if control cluster is not the seed, then applyCrds from the mcm repo by cloning
 	// if no image tags specified, then also clone the mcm repo as the the mcm process needs to be started
 
-	if !c.ControlCluster.IsSeed(c.TargetCluster) || !(len(mcContainerImage) != 0 && len(mcmContainerImage) != 0) {
+	if !c.ControlCluster.IsSeed(c.TargetCluster) || (len(mcContainerImage) == 0 && len(mcmContainerImage) == 0) {
 
 		ginkgo.By("Cloning Machine-Controller-Manager github repo")
 		gomega.Expect(helpers.CloneRepo("https://github.com/gardener/machine-controller-manager.git", mcmRepoPath)).
